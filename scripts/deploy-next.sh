@@ -3,6 +3,7 @@ set -e
 
 APPLICATION_NAME="$1"
 APPLICATION_PORT="$2"
+S3_BUCKET_NAME="$3"
 
 echo "Starting deployment for $APPLICATION_NAME on port $APPLICATION_PORT..."
 
