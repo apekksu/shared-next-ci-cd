@@ -1,0 +1,102 @@
+name: Shared CI/CD for Next.js
+
+on:
+  workflow_call:
+    inputs:
+      s3-bucket-name:
+        required: true
+        type: string
+      application-name:
+        required: true
+        type: string
+      application-port:
+        required: true
+        type: number
+      aws-region:
+        required: false
+        type: string
+        default: us-west-2
+    secrets:
+      aws-access-key-id:
+        required: true
+      aws-secret-access-key:
+        required: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Application Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Package application
+        run: |
+          zip -r ${{ inputs.application-name }}.zip \
+            .next \
+            package.json \
+            package-lock.json \
+            node_modules
+
+      - name: Upload package to S3
+        run: |
+          aws s3 cp ${{ inputs.application-name }}.zip s3://${{ inputs.s3-bucket-name }}/${{ inputs.application-name }}/
+
+      - name: Retrieve Shared EC2 Instance Information
+        run: |
+          EC2_INFO=$(aws ec2 describe-instances \
+            --filters "Name=tag:App,Values=shared-nest-ci-cd" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].[InstanceId, PublicIpAddress]" \
+            --output text)
+
+          EC2_INSTANCE_ID=$(echo "$EC2_INFO" | awk '{print $1}')
+          EC2_PUBLIC_IP=$(echo "$EC2_INFO" | awk '{print $2}')
+
+          echo "EC2 Instance ID: $EC2_INSTANCE_ID"
+          echo "EC2 Public IP: $EC2_PUBLIC_IP"
+
+          echo "EC2_INSTANCE_ID=$EC2_INSTANCE_ID" >> $GITHUB_ENV
+          echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
+
+          if [ -z "$EC2_INSTANCE_ID" ]; then
+            echo "Error: EC2_INSTANCE_ID is empty. Exiting."
+            exit 1
+          fi
+
+      - name: Deploy application using SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[\"aws s3 cp s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh /tmp/deploy-next.sh\",\"chmod +x /tmp/deploy-next.sh\",\"/tmp/deploy-next.sh '${{ inputs.application-name }}' '${{ inputs.application-port }}'\"]" \
+            --timeout-seconds 600 \
+            --region ${{ inputs.aws-region }} \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "COMMAND_ID=$COMMAND_ID" >> $GITHUB_ENV
+
+      - name: Wait for SSM command to complete
+        run: |
+          aws ssm wait command-executed \
+            --command-id "${{ env.COMMAND_ID }}" \
+            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+            --region ${{ inputs.aws-region }}
+
+      - name: Verify Deployment
+        run: |
+          echo "Deployment completed."
+          echo "Application is accessible at http://${{ env.EC2_PUBLIC_IP }}:${{ inputs.application-port }}/"
