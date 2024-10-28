@@ -40,10 +40,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
           aws-region: ${{ inputs.aws-region }}
 
-      - name: Upload Next.js deploy script to S3
+      - name: Upload deploy script to S3
         run: |
-          echo "Uploading deploy-next.sh from shared repository to S3"
-          aws s3 cp ./scripts/deploy-next.sh s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh
+          echo "Uploading deploy.sh from shared repository to S3"
+          aws s3 cp ./scripts/deploy.sh s3://${{ inputs.s3-bucket-name }}/scripts/deploy.sh
 
   build-and-deploy:
     needs: upload-shared-files
@@ -63,7 +63,7 @@ jobs:
       - name: Setup Node.js environment
         uses: actions/setup-node@v4
         with:
-          node-version: '18.17.0'  # Specify the Node.js version required by Next.js
+          node-version: '18'
 
       - name: Install dependencies
         run: npm ci
@@ -76,8 +76,7 @@ jobs:
           zip -r ${{ inputs.application-name }}.zip \
             .next \
             package.json \
-            package-lock.json \
-            node_modules
+            package-lock.json
 
       - name: Upload package to S3
         run: |
@@ -86,7 +85,7 @@ jobs:
       - name: Retrieve Shared EC2 Instance Information
         run: |
           EC2_INFO=$(aws ec2 describe-instances \
-            --filters "Name=tag:App,Values=shared-nest-ci-cd" "Name=instance-state-name,Values=running" \
+            --filters "Name=tag:App,Values=shared-next-ci-cd" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].[InstanceId, PublicIpAddress]" \
             --output text)
 
@@ -109,7 +108,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters commands="[\"aws s3 cp s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh /tmp/deploy-next.sh\",\"chmod +x /tmp/deploy-next.sh\",\"/tmp/deploy-next.sh '${{ inputs.application-name }}' '${{ inputs.application-port }}' '${{ inputs.s3-bucket-name }}'\"]" \
+            --parameters commands="[\"aws s3 cp s3://${{ inputs.s3-bucket-name }}/scripts/deploy.sh /tmp/deploy.sh\",\"chmod +x /tmp/deploy.sh\",\"/tmp/deploy.sh '${{ inputs.application-name }}' '${{ inputs.application-port }}' '${{ inputs.s3-bucket-name }}'\"]" \
             --timeout-seconds 600 \
             --region ${{ inputs.aws-region }} \
             --query "Command.CommandId" \
