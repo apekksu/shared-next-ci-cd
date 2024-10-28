@@ -30,3 +30,5 @@ echo "Starting Next.js application using PM2 on port ${APPLICATION_PORT}"
 sudo -u ubuntu pm2 start "npm run start -- -p ${APPLICATION_PORT}" \
   --name "$APPLICATION_NAME" \
   --cwd "/home/ubuntu/${APPLICATION_NAME}" || { echo "Failed to start application with PM2"; exit 1; }
+
+# test
