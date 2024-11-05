@@ -85,7 +85,7 @@ jobs:
       - name: Retrieve Shared EC2 Instance Information
         run: |
           EC2_INFO=$(aws ec2 describe-instances \
-            --filters "Name=tag:App,Values=shared-nest-ci-cd" "Name=instance-state-name,Values=running" \
+            --filters "Name=tag:App,Values=shared-next-ci-cd" "Name=instance-state-name,Values=running" \
             --query "Reservations[].Instances[].[InstanceId, PublicIpAddress]" \
             --output text)
 
