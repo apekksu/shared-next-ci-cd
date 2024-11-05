@@ -30,6 +30,3 @@ echo "Starting application using PM2"
 sudo -u ubuntu pm2 start npm --name "$APPLICATION_NAME" -- start -- -p "$APPLICATION_PORT"
 
 sudo -u ubuntu pm2 save
-
-echo "Deployment completed."
-echo "Application is accessible at http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):${APPLICATION_PORT}/"
