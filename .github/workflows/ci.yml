@@ -104,6 +104,7 @@ jobs:
           fi
 
       - name: Deploy application using SSM
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
@@ -117,6 +118,7 @@ jobs:
           echo "COMMAND_ID=$COMMAND_ID" >> $GITHUB_ENV
 
       - name: Wait for SSM command to complete
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           aws ssm wait command-executed \
             --command-id "${{ env.COMMAND_ID }}" \
@@ -124,6 +126,7 @@ jobs:
             --region ${{ inputs.aws-region }}
 
       - name: Verify Deployment
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           echo "Deployment completed."
           echo "Application is accessible at http://${{ env.EC2_PUBLIC_IP }}:${{ inputs.application-port }}/"
