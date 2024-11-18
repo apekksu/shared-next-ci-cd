@@ -68,11 +68,23 @@ jobs:
         with:
           node-version: '18'
 
+      - name: Fetch secrets from AWS Secrets Manager
+        run: |
+          set +x  # Disable command echoing for security
+          SECRET_VALUES=$(aws secretsmanager get-secret-value --secret-id "${{ inputs.secret-name }}" --query SecretString --output text)
+          echo "::add-mask::$SECRET_VALUES"  # Mask the secret in logs
+          echo "$SECRET_VALUES" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"' > .env
+        env:
+          AWS_REGION: ${{ inputs.aws-region }}
+
       - name: Install dependencies
         run: npm ci
 
       - name: Build application
         run: npm run build
+
+      - name: Remove .env file
+        run: rm .env
 
       - name: Package application
         run: |
