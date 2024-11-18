@@ -90,8 +90,12 @@ jobs:
         run: |
           zip -r ${{ inputs.application-name }}.zip \
             .next \
+            public \
+            src \
             package.json \
-            package-lock.json
+            package-lock.json \
+            next.config.mjs \
+            tsconfig.json
 
       - name: Upload package to S3
         run: |
