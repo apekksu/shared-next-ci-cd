@@ -4,6 +4,7 @@ set -e
 APPLICATION_NAME="$1"
 APPLICATION_PORT="$2"
 S3_BUCKET_NAME="$3"
+SECRET_NAME="$4"
 
 cd /home/ubuntu
 
@@ -25,6 +26,13 @@ chown -R ubuntu:ubuntu "/home/ubuntu/${APPLICATION_NAME}"
 
 echo "Installing dependencies"
 sudo -u ubuntu npm ci --omit=dev
+
+echo "Fetching secrets from AWS Secrets Manager"
+SECRET_VALUES=$(aws secretsmanager get-secret-value --secret-id "$SECRET_NAME" --query SecretString --output text)
+echo "$SECRET_VALUES" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"' > .env
+
+chmod 600 .env
+chown ubuntu:ubuntu .env
 
 echo "Starting application using PM2"
 sudo -u ubuntu pm2 start npm --name "$APPLICATION_NAME" -- start -- -p "$APPLICATION_PORT"

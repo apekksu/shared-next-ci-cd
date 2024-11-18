@@ -16,6 +16,9 @@ on:
         required: false
         type: string
         default: 'eu-central-1'
+      secret-name:
+        required: true
+        type: string
     secrets:
       aws-access-key-id:
         required: true
@@ -109,7 +112,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters commands="[\"aws s3 cp s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh /tmp/deploy-next.sh\",\"chmod +x /tmp/deploy-next.sh\",\"/tmp/deploy-next.sh '${{ inputs.application-name }}' '${{ inputs.application-port }}' '${{ inputs.s3-bucket-name }}'\"]" \
+            --parameters commands="[\"aws s3 cp s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh /tmp/deploy-next.sh\",\"chmod +x /tmp/deploy-next.sh\",\"/tmp/deploy-next.sh '${{ inputs.application-name }}' '${{ inputs.application-port }}' '${{ inputs.s3-bucket-name }}' '${{ inputs.secret-name }}'\"]" \
             --timeout-seconds 600 \
             --region ${{ inputs.aws-region }} \
             --query "Command.CommandId" \
