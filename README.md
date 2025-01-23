@@ -18,6 +18,7 @@ name: Deploy NextJS app
 on:
   push:
     branches:
+
       - main
       - prod
 
