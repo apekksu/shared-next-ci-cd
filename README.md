@@ -10,27 +10,45 @@ Set up the correct directory structure:
     **.github/workflows/deploy.yml** with referance to this shared pipeline as shown in the example
     source files located in **/src** (**main.ts**, app-module etc.)
 Commit and push to the branch mentioned in your yaml for automatic deployment.
+Allowed range for application port is 3333 - 3350
 
 ```yaml
-name: Deploy Next.js App
+name: Deploy NextJS app
 
 on:
   push:
     branches:
       - main
+      - prod
 
 jobs:
-  deploy:
-    uses: apekksu/shared-next-ci-cd/.github/workflows/ci.yml@main
-    with:
-      s3-bucket-name: apekksu-next-euc1
-      application-name: ${{ github.event.repository.name }}
-      application-port: 3333 # allowed range 3333 - 3350
-      aws-region: eu-central-1
+  set-params-and-deploy:
+    runs-on: ubuntu-latest
 
-    secrets:
-      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Check branch and set inputs
+        id: set-vars
+        run: |
+          if [ "${{ github.ref_name }}" = "prod" ]; then
+            echo "s3_bucket=apekksu-next-prod-euc1" >> $GITHUB_OUTPUT
+            echo "secret_name=cyberfolk-prod" >> $GITHUB_OUTPUT
+            echo "application_port=3335" >> $GITHUB_OUTPUT
+          else
+            echo "s3_bucket=apekksu-next-euc1" >> $GITHUB_OUTPUT
+            echo "secret_name=cyberfolk-web-app" >> $GITHUB_OUTPUT
+            echo "application_port=3333" >> $GITHUB_OUTPUT
+          
+      - name: Call shared pipeline
+        uses: apekksu/shared-next-ci-cd/.github/workflows/ci.yml@main
+        with:
+          s3-bucket-name: ${{ steps.set-vars.outputs.s3_bucket }}
+          application-name: ${{ github.event.repository.name }}
+          application-port: ${{ steps.set-vars.outputs.application_port }}
+          aws-region: eu-central-1
+          secret-name: ${{ steps.set-vars.outputs.secret_name }}
+        secrets:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 ```
 
 ### `Using organizaion level secrets`
