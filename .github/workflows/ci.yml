@@ -19,12 +19,21 @@ on:
       secret-name:
         required: true
         type: string
+      ec2-name:
+        required: false
+        type: string
+      ec2-app-tag:
+        required: false
+        type: string
+        default: 'shared-next-ci-cd'
+
+
     secrets:
       aws-access-key-id:
         required: true
       aws-secret-access-key:
         required: true
-
+      
 jobs:
   upload-shared-files:
     runs-on: ubuntu-latest
@@ -103,29 +112,29 @@ jobs:
         run: |
           aws s3 cp ${{ inputs.application-name }}.zip s3://${{ inputs.s3-bucket-name }}/${{ inputs.application-name }}/
 
-      - name: Retrieve Shared EC2 Instance Information
+      - name: Retrieve EC2 Instance Information
+        shell: bash
         run: |
-          EC2_INFO=$(aws ec2 describe-instances \
-            --filters "Name=tag:App,Values=shared-next-ci-cd" "Name=instance-state-name,Values=running" \
-            --query "Reservations[].Instances[].[InstanceId, PublicIpAddress]" \
-            --output text)
-
-          EC2_INSTANCE_ID=$(echo "$EC2_INFO" | awk '{print $1}')
-          EC2_PUBLIC_IP=$(echo "$EC2_INFO" | awk '{print $2}')
-
-          echo "EC2 Instance ID: $EC2_INSTANCE_ID"
-          echo "EC2 Public IP: $EC2_PUBLIC_IP"
-
-          echo "EC2_INSTANCE_ID=$EC2_INSTANCE_ID" >> $GITHUB_ENV
-          echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> $GITHUB_ENV
-
-          if [ -z "$EC2_INSTANCE_ID" ]; then
-            echo "Error: EC2_INSTANCE_ID is empty. Exiting."
-            exit 1
+          set -euo pipefail
+          if [[ -n "${{ inputs.ec2-name }}" ]]; then
+            FILTERS=( "Name=tag:Name,Values=${{ inputs.ec2-name }}" "Name=instance-state-name,Values=running" )
+          else
+            FILTERS=( "Name=tag:App,Values=${{ inputs.ec2-app-tag }}" "Name=instance-state-name,Values=running" )
           fi
 
+          OUT=$(aws ec2 describe-instances --filters "${FILTERS[@]}" \
+            --query "Reservations[].Instances[].[InstanceId, PublicIpAddress]" --output text)
+
+          EC2_INSTANCE_ID=$(echo "$OUT" | awk '{print $1}')
+          EC2_PUBLIC_IP=$(echo "$OUT" | awk '{print $2}')
+
+          test -n "$EC2_INSTANCE_ID" || { echo "No instance found"; exit 1; }
+
+          echo "EC2_INSTANCE_ID=$EC2_INSTANCE_ID" >> "$GITHUB_ENV"
+          echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> "$GITHUB_ENV"
+
+
       - name: Deploy application using SSM
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
@@ -139,7 +148,6 @@ jobs:
           echo "COMMAND_ID=$COMMAND_ID" >> $GITHUB_ENV
 
       - name: Wait for SSM command to complete
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           aws ssm wait command-executed \
             --command-id "${{ env.COMMAND_ID }}" \
@@ -147,7 +155,6 @@ jobs:
             --region ${{ inputs.aws-region }}
 
       - name: Verify Deployment
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           echo "Deployment completed."
           echo "Application is accessible at http://${{ env.EC2_PUBLIC_IP }}:${{ inputs.application-port }}/"
