@@ -3,78 +3,56 @@ name: Shared CI/CD for Next.js
 on:
   workflow_call:
     inputs:
-      s3-bucket-name:
-        required: true
-        type: string
-      application-name:
-        required: true
-        type: string
-      application-port:
-        required: true
-        type: number
-      aws-region:
-        required: false
-        type: string
-        default: 'eu-central-1'
-      secret-name:
-        required: true
-        type: string
-      ec2-name:
-        required: false
-        type: string
-      ec2-app-tag:
-        required: false
-        type: string
-        default: 'shared-next-ci-cd'
-
-
+      s3-bucket-name:   { required: true,  type: string }
+      application-name: { required: true,  type: string }
+      application-port: { required: true,  type: number }
+      aws-region:       { required: false, type: string,  default: 'eu-central-1' }
+      secret-name:      { required: true,  type: string }
+      ec2-name:         { required: false, type: string }
+      ec2-app-tag:      { required: false, type: string, default: 'shared-next-ci-cd' }
+      app-ref:          { required: false, type: string }
     secrets:
-      aws-access-key-id:
-        required: true
-      aws-secret-access-key:
-        required: true
-      
+      aws-access-key-id:     { required: true }
+      aws-secret-access-key: { required: true }
+
 jobs:
   upload-shared-files:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Shared Repository
         uses: actions/checkout@v4
         with:
-          repository: 'apekksu/shared-next-ci-cd'
-          ref: 'main'
+          repository: apekksu/shared-next-ci-cd
+          ref: main
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-access-key-id:     ${{ secrets.aws-access-key-id }}
           aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
-          aws-region: ${{ inputs.aws-region }}
+          aws-region:            ${{ inputs.aws-region }}
 
       - name: Upload deploy script to S3
-        run: |
-          echo "Uploading deploy-next.sh from shared repository to S3"
-          aws s3 cp ./scripts/deploy-next.sh s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh
+        run: aws s3 cp ./scripts/deploy-next.sh s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh
 
   build-and-deploy:
     if: ${{ github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]') }}
     needs: upload-shared-files
     runs-on: ubuntu-latest
-
     steps:
-      
       - name: Checkout Application Repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.app-ref || github.ref_name }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.aws-access-key-id }}
+          aws-access-key-id:     ${{ secrets.aws-access-key-id }}
           aws-secret-access-key: ${{ secrets.aws-secret-access-key }}
-          aws-region: ${{ inputs.aws-region }}
+          aws-region:            ${{ inputs.aws-region }}
 
-      - name: Setup Node.js environment
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
@@ -88,31 +66,24 @@ jobs:
         env:
           AWS_REGION: ${{ inputs.aws-region }}
 
-      - name: Install dependencies
+      - name: Install deps
         run: npm ci
 
-      - name: Build application
+      - name: Build
         run: npm run build
 
-      - name: Remove .env file
+      - name: Clean .env
         run: rm .env
 
-      - name: Package application
+      - name: Package artifact
         run: |
           zip -r ${{ inputs.application-name }}.zip \
-            .next \
-            public \
-            src \
-            package.json \
-            package-lock.json \
-            next.config.mjs \
-            tsconfig.json
+            .next public src package.json package-lock.json next.config.mjs tsconfig.json
 
-      - name: Upload package to S3
-        run: |
-          aws s3 cp ${{ inputs.application-name }}.zip s3://${{ inputs.s3-bucket-name }}/${{ inputs.application-name }}/
+      - name: Upload artifact to S3
+        run: aws s3 cp ${{ inputs.application-name }}.zip s3://${{ inputs.s3-bucket-name }}/${{ inputs.application-name }}/
 
-      - name: Retrieve EC2 Instance Information
+      - name: Resolve target EC2
         shell: bash
         run: |
           set -euo pipefail
@@ -121,40 +92,26 @@ jobs:
           else
             FILTERS=( "Name=tag:App,Values=${{ inputs.ec2-app-tag }}" "Name=instance-state-name,Values=running" )
           fi
+          OUT=$(aws ec2 describe-instances --filters "${FILTERS[@]}" --query "Reservations[].Instances[].[InstanceId, PublicIpAddress]" --output text)
+          IID=$(echo "$OUT" | awk '{print $1}'); IP=$(echo "$OUT" | awk '{print $2}')
+          test -n "$IID" || { echo "No instance found"; exit 1; }
+          echo "EC2_INSTANCE_ID=$IID" >> "$GITHUB_ENV"
+          echo "EC2_PUBLIC_IP=$IP"    >> "$GITHUB_ENV"
 
-          OUT=$(aws ec2 describe-instances --filters "${FILTERS[@]}" \
-            --query "Reservations[].Instances[].[InstanceId, PublicIpAddress]" --output text)
-
-          EC2_INSTANCE_ID=$(echo "$OUT" | awk '{print $1}')
-          EC2_PUBLIC_IP=$(echo "$OUT" | awk '{print $2}')
-
-          test -n "$EC2_INSTANCE_ID" || { echo "No instance found"; exit 1; }
-
-          echo "EC2_INSTANCE_ID=$EC2_INSTANCE_ID" >> "$GITHUB_ENV"
-          echo "EC2_PUBLIC_IP=$EC2_PUBLIC_IP" >> "$GITHUB_ENV"
-
-
-      - name: Deploy application using SSM
+      - name: Deploy via SSM
         run: |
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --parameters commands="[\"aws s3 cp s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh /tmp/deploy-next.sh\",\"chmod +x /tmp/deploy-next.sh\",\"/tmp/deploy-next.sh '${{ inputs.application-name }}' '${{ inputs.application-port }}' '${{ inputs.s3-bucket-name }}' '${{ inputs.secret-name }}'\"]" \
-            --timeout-seconds 600 \
-            --region ${{ inputs.aws-region }} \
-            --query "Command.CommandId" \
-            --output text)
-
+            --timeout-seconds 1200 --region ${{ inputs.aws-region }} \
+            --query "Command.CommandId" --output text)
           echo "COMMAND_ID=$COMMAND_ID" >> $GITHUB_ENV
 
-      - name: Wait for SSM command to complete
-        run: |
-          aws ssm wait command-executed \
-            --command-id "${{ env.COMMAND_ID }}" \
-            --instance-id "${{ env.EC2_INSTANCE_ID }}" \
-            --region ${{ inputs.aws-region }}
+      - name: Wait SSM
+        run: aws ssm wait command-executed --command-id "${{ env.COMMAND_ID }}" --instance-id "${{ env.EC2_INSTANCE_ID }}" --region ${{ inputs.aws-region }}
 
-      - name: Verify Deployment
+      - name: Done
         run: |
           echo "Deployment completed."
-          echo "Application is accessible at http://${{ env.EC2_PUBLIC_IP }}:${{ inputs.application-port }}/"
+          echo "Application is accessible (via Nginx/HTTPS) at http://${{ env.EC2_PUBLIC_IP }}:${{ inputs.application-port }}/"

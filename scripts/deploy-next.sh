@@ -34,6 +34,8 @@ echo "$SECRET_VALUES" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"' > .env
 chmod 600 .env
 chown ubuntu:ubuntu .env
 
+unset NODE_OPTIONS
+
 echo "Starting application using PM2"
 sudo -u ubuntu pm2 start npm --name "$APPLICATION_NAME" -- start -- -p "$APPLICATION_PORT"
 
