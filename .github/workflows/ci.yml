@@ -109,7 +109,26 @@ jobs:
           echo "COMMAND_ID=$COMMAND_ID" >> $GITHUB_ENV
 
       - name: Wait SSM
-        run: aws ssm wait command-executed --command-id "${{ env.COMMAND_ID }}" --instance-id "${{ env.EC2_INSTANCE_ID }}" --region ${{ inputs.aws-region }}
+        run: |
+          for i in {1..120}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "${{ env.COMMAND_ID }}" \
+              --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+              --query Status --output text 2>/dev/null || echo "Pending")
+            echo "Attempt $i: $STATUS"
+            case "$STATUS" in
+              Success) exit 0 ;;
+              Failed|Cancelled|TimedOut) 
+                aws ssm get-command-invocation \
+                  --command-id "${{ env.COMMAND_ID }}" \
+                  --instance-id "${{ env.EC2_INSTANCE_ID }}" \
+                  --query StandardErrorContent --output text
+                exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Timed out waiting for command"
+          exit 1n: aws ssm wait command-executed --command-id "${{ env.COMMAND_ID }}" --instance-id "${{ env.EC2_INSTANCE_ID }}" --region ${{ inputs.aws-region }}
 
       - name: Done
         run: |
