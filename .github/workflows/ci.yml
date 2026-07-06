@@ -11,6 +11,7 @@ on:
       ec2-name:         { required: false, type: string }
       ec2-app-tag:      { required: false, type: string, default: 'shared-next-ci-cd' }
       app-ref:          { required: false, type: string }
+      workspace:        { required: false, type: string, default: '' }
     secrets:
       aws-access-key-id:     { required: true }
       aws-secret-access-key: { required: true }
@@ -62,7 +63,12 @@ jobs:
           set +x
           SECRET_VALUES=$(aws secretsmanager get-secret-value --secret-id "${{ inputs.secret-name }}" --query SecretString --output text)
           echo "::add-mask::$SECRET_VALUES"
-          echo "$SECRET_VALUES" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"' > .env
+          if [ -n "${{ inputs.workspace }}" ]; then
+            ENV_FILE="apps/${{ inputs.workspace }}/.env"
+          else
+            ENV_FILE=".env"
+          fi
+          echo "$SECRET_VALUES" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"' > "$ENV_FILE"
         env:
           AWS_REGION: ${{ inputs.aws-region }}
 
@@ -70,15 +76,36 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: |
+          if [ -n "${{ inputs.workspace }}" ]; then
+            npm run build --workspace=${{ inputs.workspace }}
+          else
+            npm run build
+          fi
 
       - name: Clean .env
-        run: rm .env
+        run: |
+          if [ -n "${{ inputs.workspace }}" ]; then
+            rm apps/${{ inputs.workspace }}/.env
+          else
+            rm .env
+          fi
 
       - name: Package artifact
         run: |
-          zip -r ${{ inputs.application-name }}.zip \
-            .next public src package.json package-lock.json next.config.mjs tsconfig.json
+          if [ -n "${{ inputs.workspace }}" ]; then
+            npm prune --omit=dev
+            zip -yr ${{ inputs.application-name }}.zip \
+              package.json package-lock.json turbo.json node_modules apps packages \
+              -x "apps/*/node_modules/*" \
+              -x "packages/*/node_modules/*" \
+              -x "apps/*/.turbo/*" \
+              -x "packages/*/.turbo/*" \
+              -x "apps/*/.next/cache/*"
+          else
+            zip -r ${{ inputs.application-name }}.zip \
+              .next public src package.json package-lock.json next.config.mjs tsconfig.json
+          fi
 
       - name: Upload artifact to S3
         run: aws s3 cp ${{ inputs.application-name }}.zip s3://${{ inputs.s3-bucket-name }}/${{ inputs.application-name }}/
@@ -103,7 +130,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ env.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --parameters commands="[\"aws s3 cp s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh /tmp/deploy-next.sh\",\"chmod +x /tmp/deploy-next.sh\",\"/tmp/deploy-next.sh '${{ inputs.application-name }}' '${{ inputs.application-port }}' '${{ inputs.s3-bucket-name }}' '${{ inputs.secret-name }}'\"]" \
+            --parameters commands="[\"aws s3 cp s3://${{ inputs.s3-bucket-name }}/scripts/deploy-next.sh /tmp/deploy-next.sh\",\"chmod +x /tmp/deploy-next.sh\",\"/tmp/deploy-next.sh '${{ inputs.application-name }}' '${{ inputs.application-port }}' '${{ inputs.s3-bucket-name }}' '${{ inputs.secret-name }}' '${{ inputs.workspace }}'\"]" \
             --timeout-seconds 1200 --region ${{ inputs.aws-region }} \
             --query "Command.CommandId" --output text)
           echo "COMMAND_ID=$COMMAND_ID" >> $GITHUB_ENV
