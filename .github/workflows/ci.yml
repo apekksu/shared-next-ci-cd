@@ -95,13 +95,17 @@ jobs:
         run: |
           if [ -n "${{ inputs.workspace }}" ]; then
             npm prune --omit=dev
+            WS="${{ inputs.workspace }}"
+            excludes=( -x "packages/*/node_modules/*" -x "apps/*/.turbo/*" -x "packages/*/.turbo/*" -x "apps/*/.next/cache/*" )
+            for d in apps/*/; do
+              d="${d%/}"
+              if [ "$d" != "apps/$WS" ]; then
+                excludes+=( -x "$d/node_modules/*" )
+              fi
+            done
             zip -yr ${{ inputs.application-name }}.zip \
               package.json package-lock.json turbo.json node_modules apps packages \
-              -x "apps/*/node_modules/*" \
-              -x "packages/*/node_modules/*" \
-              -x "apps/*/.turbo/*" \
-              -x "packages/*/.turbo/*" \
-              -x "apps/*/.next/cache/*"
+              "${excludes[@]}"
           else
             zip -r ${{ inputs.application-name }}.zip \
               .next public src package.json package-lock.json next.config.mjs tsconfig.json
