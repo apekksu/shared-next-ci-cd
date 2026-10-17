@@ -12,6 +12,9 @@ on:
       ec2-app-tag:      { required: false, type: string, default: 'shared-next-ci-cd' }
       app-ref:          { required: false, type: string }
       workspace:        { required: false, type: string, default: '' }
+      # Overrides the Build step (e.g. a turbo run with a remote cache). Runs at
+      # the repo root after `npm ci`. Empty = the default `npm run build`.
+      build-command:    { required: false, type: string, default: '' }
     secrets:
       aws-access-key-id:     { required: true }
       aws-secret-access-key: { required: true }
@@ -76,8 +79,12 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
         run: |
-          if [ -n "${{ inputs.workspace }}" ]; then
+          if [ -n "$BUILD_COMMAND" ]; then
+            bash -c "$BUILD_COMMAND"
+          elif [ -n "${{ inputs.workspace }}" ]; then
             npm run build --workspace=${{ inputs.workspace }}
           else
             npm run build
